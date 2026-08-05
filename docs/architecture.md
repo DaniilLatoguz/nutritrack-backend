@@ -141,15 +141,63 @@ should not simply inherit this one.
 
 ---
 
-## ADR-003: <decision title>
+## ADR-003: Product identity — deferred
 
-**Date:**
-**Status:** accepted
+**Date:** 2026-08-05
+**Status:** deferred — to be resolved in TASK-004
+
 **Context:**
+Nothing currently prevents the same product from being stored twice. Before a
+technical constraint can be chosen, two things must be settled: what makes two
+products the same, and how often duplicates actually occur.
+
 **Options considered:**
+
+- **Unique by `name` alone.** Simplest possible rule.
+  Drawback: incorrect. Milk 3.2% from two manufacturers carries different
+  nutrition values and must exist as two separate records. Enforcing uniqueness
+  on the name would merge genuinely different products and lose data.
+
+- **Unique by `(name, brand)`.** Matches how commercial calorie trackers model
+  the domain — nutrition is tied to a manufacturer.
+  Drawback: `brand` cannot be mandatory. Raw and home-made foods — an egg,
+  boiled buckwheat, a home-made cutlet — have no manufacturer by nature.
+  In SQL, `NULL` is not equal to `NULL`, so a `UNIQUE (name, brand)` constraint
+  silently permits unlimited duplicates for every brandless product. The naive
+  form of this option does not do what it appears to do.
+
+- **Make `brand` mandatory with a placeholder value.** Would make the constraint
+  work uniformly.
+  Drawback: forces meaningless data into the column and makes "unknown brand"
+  indistinguishable from "has no brand". A disguised `NULL`.
+
 **Decision:**
+Product identity is defined as the pair `(name, brand)`. `brand` stays optional.
+
+No database constraint is introduced yet. Three workarounds exist for the `NULL`
+problem — a `NOT NULL DEFAULT ''` column, a partial unique index over rows where
+`brand IS NULL`, or `UNIQUE NULLS NOT DISTINCT` (PostgreSQL 15+) — and choosing
+between them requires information the project does not have:
+
+1. How frequently duplicates actually appear, and whether they arise from
+   concurrent requests or from careless input. To be measured in TASK-004.
+2. Who creates products. If only an administrator maintains the catalogue,
+   duplicates are rare and correctable by hand; if every user can add products,
+   the volume is different by orders of magnitude. This depends on the `User`
+   model, which does not exist yet.
+
+Deciding now would mean guessing at both.
+
 **Consequences:**
-**Revisit if:**
+- Duplicate products are possible until TASK-004. Accepted deliberately — the
+  duplicates are the measurement.
+- Text normalisation (case, spacing, `3.2%` vs `3,2%`) is a separate concern and
+  is not addressed by any uniqueness constraint on raw strings.
+
+**Revisit if / when:**
+TASK-004, experiment 4 — concurrent `POST /products` requests with identical
+payloads. The observed duplicate count decides which of the three constraint
+forms is adopted in TASK-005.
 
 ---
 
@@ -159,7 +207,9 @@ Decisions deliberately postponed until there is enough information.
 
 | Question | Why postponed | When to revisit |
 |---|---|---|
-| | | |
+| Uniqueness constraint form for `(name, brand)` with optional `brand` | No data on duplicate frequency; product ownership undecided | TASK-004 (experiment 4) |
+| Name normalisation before comparison (case, spacing, decimal separator) | Not solvable by a database constraint alone | When duplicates are observed |
+| User-defined recipes / composite products | Requires `MealItem` and a nutrition aggregation model | When the diary is built |
 
 ---
 
