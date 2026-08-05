@@ -61,15 +61,83 @@ base without changing it.
 
 ---
 
-## ADR-002: <decision title>
+Нет, не float — и хорошо, что переспросил, потому что вопрос показывает, где формулировка размылась.
 
-**Date:**
+Разведём три вещи:
+
+Поля продукта (kcal_per_100g и БЖУ) — int. Обосновал ты: точность дробнее 1 ккал ложная при разбросе 5–20%.
+grams — int. Кухонные весы дают целые.
+Результат расчёта — не хранится нигде. Он вычисляется в момент запроса: kcal_per_100g * grams / 100. Python сам вернёт float — и это нормально, потому что значение живёт микросекунды и сразу округляется в ответ.
+
+«Хранить точно» относилось к grams, а не к калориям. Из двух целых чисел точный результат восстанавливается всегда — поэтому хранить сами калории не нужно.
+
+Держи текст.
+
+markdown
+## ADR-002: Numeric type for nutrition values
+
+**Date:** 2026-08-05
 **Status:** accepted
+
 **Context:**
+A product carries four numeric fields per 100 g: calories, protein, fat and
+carbohydrates. Diary entries multiply these by the amount eaten and sum the
+results into daily and weekly totals, so the chosen type determines both the
+storage precision and the behaviour of every aggregation built on top of it.
+
 **Options considered:**
+
+- **Floating point (`float` / `double precision`).** The default choice and
+  the fastest to compute with.
+  Drawback: binary floating point cannot represent most decimal fractions
+  exactly — `0.1 + 0.2 == 0.3` evaluates to `False` in Python. The error is
+  negligible per value but accumulates across a summed day, and equality
+  comparisons on stored values become unreliable.
+
+- **Fixed-point decimal (`Decimal` / `numeric`).** Exact decimal arithmetic,
+  the standard choice for money.
+  Drawback: slower arithmetic and larger storage. The precision it buys is
+  meaningless here — see the decision below.
+
+- **Integer (`int` / `integer`).** Whole kilocalories and whole grams.
+  Drawback: no sub-unit precision. Acceptable, since the source data does not
+  carry that precision in the first place.
+
 **Decision:**
+Store all product nutrition values as integers: whole kilocalories and whole
+grams per 100 g.
+
+The determining argument is the accuracy of the data itself, not the capability
+of the type. Nutrition values on food labels are batch averages and vary by
+roughly 5–20% between batches of the same product. Storing `165.4 kcal` would
+present a precision the underlying measurement does not have — it is not extra
+accuracy, it is a false claim of accuracy. Nutrition guidelines are likewise
+followed to the nearest tens of kilocalories per day.
+
+Related but decided separately: the amount eaten (`grams`) is also stored as an
+integer, for an unrelated reason — kitchen scales report whole grams. The two
+fields share a type by coincidence, not by dependency.
+
+Calculated values are not stored. A diary entry keeps `grams` and a reference to
+the product; energy is derived on read as `kcal_per_100g * grams / 100`. The
+intermediate result is a runtime float and is never persisted, which keeps
+rounding out of the storage layer entirely.
+
 **Consequences:**
+- Rounding happens once, at the presentation boundary, when a daily or weekly
+  total is returned. Per-entry rounding is avoided, so no drift accumulates
+  across a day of entries.
+- Products whose labels give fractional values (e.g. 0.5 g of fat) are rounded
+  on import; the loss is well inside the natural batch variance.
+- Sub-gram inputs cannot be recorded. Acceptable for food logging.
+- Equality and aggregation over stored values behave exactly, with no floating
+  point surprises in queries or tests.
+
 **Revisit if:**
+The project starts tracking substances measured in fractions of a gram — for
+example micronutrients, vitamins or supplement dosages — where 1 g is a coarse
+unit rather than a fine one. Those would need their own type decision and
+should not simply inherit this one.
 
 ---
 
